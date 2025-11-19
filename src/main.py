@@ -31,13 +31,19 @@ def main():
     project_root = config["project_path"]
     script_relative_path = config["script_path"]
     venv_python = config.get("venv_python")  # peut être None
+    provider = config.get("provider", "mistral")  # "mistral" ou "groq"
 
     print("[main] Projet racine :", project_root)
     print("[main] Script cible :", script_relative_path)
     print("[main] Interpréteur Python (venv) :", venv_python or "(sys.executable)")
+    print("[main] Fournisseur IA utilisé :", provider)
 
     # 2. Première exécution du script (avec bug)
-    stdout, stderr, returncode = run_python_script(project_root, script_relative_path, venv_python)
+    stdout, stderr, returncode = run_python_script(
+        project_root,
+        script_relative_path,
+        python_executable=venv_python
+    )
 
     print("\n[main] ---- SORTIE STANDARD ----")
     print(stdout)
@@ -52,8 +58,8 @@ def main():
     script_path = os.path.join(project_root, script_relative_path)
     code = read_file(script_path)
 
-    # 4. Appel (IA) pour obtenir une correction
-    ai_response_text = ask_ai_for_correction(code, stderr, provider="mistral")
+    # 4. Appel IA (Groq ou Mistral via ai_agent.py)
+    ai_response_text = ask_ai_for_correction(code, stderr, provider=provider)
     print("\n[main] ---- RÉPONSE IA BRUTE ----")
     print(ai_response_text)
 
@@ -74,7 +80,11 @@ def main():
 
     # 7. Ré-exécution du script pour vérifier que l'erreur a disparu
     print("\n[main] Ré-exécution du script après correction...")
-    stdout2, stderr2, returncode2 = run_python_script(project_root, script_relative_path, venv_python)
+    stdout2, stderr2, returncode2 = run_python_script(
+        project_root,
+        script_relative_path,
+        python_executable=venv_python
+    )
 
     print("\n[main] ---- SORTIE STANDARD (après correction) ----")
     print(stdout2)

@@ -4,7 +4,7 @@ import json
 
 from executor import run_python_script
 from ai_agent import ask_ai_for_correction
-from json_validator import parse_and_validate_correction, JsonValidationError
+from json_validator import validate_json_correction
 from patcher import apply_patch
 
 
@@ -94,6 +94,14 @@ def main():
 
     save_cfg = st.checkbox("Sauvegarder la configuration", value=True)
 
+    # Choix du provider IA
+    provider = st.radio(
+        "Choisir le fournisseur IA",
+        options=["mistral", "groq"],
+        index=0,
+        format_func=lambda x: "Mistral AI" if x == "mistral" else "Groq"
+    )
+
     if st.button("Lancer l'analyse"):
         # Met à jour / sauve la config
         new_config = {
@@ -120,7 +128,11 @@ def main():
         # 3) Exécution initiale du script
         st.subheader("2️⃣ Exécution initiale du script")
         try:
-            stdout, stderr, returncode = run_python_script(project_path, script_path, venv_python)
+            stdout, stderr, returncode = run_python_script(
+                project_root=project_path,
+                script_relative_path=script_path,
+                python_executable=venv_python
+            )
         except FileNotFoundError as e:
             st.error(str(e))
             return
@@ -134,20 +146,19 @@ def main():
             st.success("Le script s'est exécuté sans erreur. Rien à corriger.")
             return
 
-        # 4) Appel IA (Mistral ou autre, via ai_agent.py)
+        # 4) Appel IA (Mistral ou Groq, via ai_agent.py)
         st.subheader("3️⃣ Proposition de correction par l'IA")
-        ai_response_text = ask_ai_for_correction(code, stderr, provider="mistral")
+        ai_response_text = ask_ai_for_correction(code, stderr, provider=provider)
         st.markdown("**Réponse brute de l'IA**")
         st.code(ai_response_text, language="json")
 
         # 5) Validation du JSON
         st.subheader("4️⃣ Validation du JSON de correction")
-        max_line = len(code.splitlines())
         try:
-            correction = parse_and_validate_correction(ai_response_text, max_line)
+            correction = validate_json_correction(ai_response_text)
             st.success("JSON valide ✅")
             st.json(correction)
-        except JsonValidationError as e:
+        except Exception as e:
             st.error(f"JSON de correction invalide : {e}")
             return
 
@@ -157,7 +168,7 @@ def main():
 
         if apply_auto:
             try:
-                modified_file_path = apply_patch(project_path, correction)
+                modified_file_path = apply_patch(project_root=project_path, correction=correction)
                 st.success(f"Patch appliqué au fichier : {modified_file_path}")
             except Exception as e:
                 st.error(f"Erreur lors de l'application du patch : {e}")
@@ -175,7 +186,11 @@ def main():
 
             # 7) Ré-exécution après correction
             st.subheader("6️⃣ Ré-exécution après correction")
-            stdout2, stderr2, returncode2 = run_python_script(project_path, script_path, venv_python)
+            stdout2, stderr2, returncode2 = run_python_script(
+                project_root=project_path,
+                script_relative_path=script_path,
+                python_executable=venv_python
+            )
 
             st.markdown("**Sortie standard (après correction)**")
             st.code(stdout2 or "(vide)")

@@ -2,66 +2,99 @@ import json
 from typing import Any, Dict
 
 
-class JsonValidationError(Exception):
-    """Erreur levée lorsque le JSON de correction est invalide."""
-    pass
+def clean_json_text(text: str) -> str:
+    """
+    Nettoie la réponse IA :
+    - supprime le markdown ```json ou ``` 
+    - retire les balises parasites
+    - supprime le texte avant/après le JSON
+    """
+    if not isinstance(text, str):
+        text = str(text)
+
+    # Supprimer les lignes ```xxx
+    lines = text.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            continue
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines).strip()
+
+    # Si commence par "json" ou similaire -> retirer
+    if cleaned.lower().startswith("json"):
+        cleaned = cleaned[4:].strip()
+
+    return cleaned
 
 
-def parse_and_validate_correction(json_text: str, max_line: int) -> Dict[str, Any]:
+def validate_json_correction(raw_text: str) -> Dict[str, Any]:
     """
-    Parse un texte JSON et valide sa structure.
-    :param json_text: Texte renvoyé par l'IA.
-    :param max_line: Nombre total de lignes du fichier à corriger.
-    :return: Dictionnaire Python représentant la correction.
-    :raises JsonValidationError: si quelque chose ne va pas.
+    Valide un JSON venant de l'IA :
+    - Nettoyage
+    - Tentative de parsing
+    - Validation du schéma attendu
     """
+
+    if not raw_text or raw_text.strip() == "":
+        raise ValueError("La réponse de l’IA est vide ou nulle (raw_text est vide).")
+
+    cleaned = clean_json_text(raw_text)
+
+    # Si encore vide après nettoyage
+    if cleaned.strip() == "":
+        raise ValueError("La réponse IA ne contient aucun JSON valide après nettoyage.")
+
+    # Tentative de parsing JSON
     try:
-        data = json.loads(json_text)
-    except json.JSONDecodeError as e:
-        raise JsonValidationError(f"JSON invalide : {e}")
+        parsed = json.loads(cleaned)
+    except Exception as e:
+        raise ValueError(
+            f"Erreur lors du parsing JSON : {e}\n"
+            f"Texte reçu et nettoyé :\n{cleaned}"
+        )
 
-    # Vérification des clés obligatoires
-    for key in ("file", "line", "action", "new_code"):
-        if key not in data:
-            raise JsonValidationError(f"Clé manquante dans le JSON : {key}")
+    # Vérification du schéma
+    required_keys = {"file", "line", "action", "new_code"}
+    if not all(k in parsed for k in required_keys):
+        raise ValueError(
+            "JSON invalide : il manque une ou plusieurs clés obligatoires.\n"
+            f"Reçu : {parsed}"
+        )
 
-    file = data["file"]
-    line = data["line"]
-    action = data["action"]
-    new_code = data["new_code"]
+    # Vérification des types de base
+    if parsed["action"] not in ["replace", "insert", "delete", "none"]:
+        raise ValueError(
+            f"Valeur 'action' invalide : {parsed['action']}. "
+            "Actions valides : replace | insert | delete | none."
+        )
 
-    # Types
-    if file is not None and not isinstance(file, str):
-        raise JsonValidationError("Le champ 'file' doit être une chaîne ou null.")
-    if line is not None and not isinstance(line, int):
-        raise JsonValidationError("Le champ 'line' doit être un entier ou null.")
-    if not isinstance(action, str):
-        raise JsonValidationError("Le champ 'action' doit être une chaîne.")
-    if new_code is not None and not isinstance(new_code, str):
-        raise JsonValidationError("Le champ 'new_code' doit être une chaîne ou null.")
+    # Cas où aucune correction n'est nécessaire
+    if parsed["action"] == "none":
+        if not (parsed["file"] is None and parsed["line"] is None and parsed["new_code"] is None):
+            raise ValueError(
+                "Format incorrect pour action='none'. "
+                "Attendu : file=null, line=null, new_code=null."
+            )
+        return parsed  # OK
 
-    # Action cohérente
-    allowed_actions = {"replace", "insert", "delete", "none"}
-    if action not in allowed_actions:
-        raise JsonValidationError(f"Action inconnue : {action}")
+    # Vérifications pour replace | insert | delete
+    if parsed["file"] is None or not isinstance(parsed["file"], str):
+        raise ValueError(f"Le champ 'file' doit être un texte valide : {parsed['file']}")
 
-    if action == "none":
-        # Aucun changement attendu
-        if not (file is None and line is None and new_code is None):
-            raise JsonValidationError("Pour action 'none', file/line/new_code doivent être null.")
-        return data
+    if not isinstance(parsed["line"], int) or parsed["line"] <= 0:
+        raise ValueError(f"Le champ 'line' doit être un entier positif : {parsed['line']}")
 
-    # Pour les autres actions, on doit avoir un fichier et une ligne valides
-    if file is None or line is None:
-        raise JsonValidationError("Pour une action autre que 'none', 'file' et 'line' ne peuvent pas être null.")
+    if parsed["action"] in ["replace", "insert"] and not isinstance(parsed["new_code"], str):
+        raise ValueError(
+            f"Le champ 'new_code' doit être une chaîne pour replace/insert. Reçu : {parsed['new_code']}"
+        )
 
-    if line < 1 or line > max_line:
-        raise JsonValidationError(f"Numéro de ligne invalide : {line}. Le fichier a {max_line} lignes.")
+    if parsed["action"] == "delete" and parsed["new_code"] not in ["", None]:
+        raise ValueError(
+            f"Pour delete, new_code doit être vide ('') ou null. Reçu : {parsed['new_code']}"
+        )
 
-    if action in {"replace", "insert"} and (new_code is None or new_code.strip() == ""):
-        raise JsonValidationError(f"Action '{action}' nécessite un 'new_code' non vide.")
-
-    if action == "delete" and new_code not in (None, "", " "):
-        raise JsonValidationError("Pour 'delete', 'new_code' doit être vide ou null.")
-
-    return data
+    return parsed

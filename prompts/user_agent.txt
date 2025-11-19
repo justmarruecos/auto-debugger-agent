@@ -1,0 +1,31 @@
+Voici le code source à analyser :
+
+<CODE>
+
+Voici l’erreur obtenue lors de l’exécution :
+
+<ERREUR>
+
+Ta tâche :
+Analyse ce code et ce message d’erreur.
+Identifie la cause exacte du problème.
+Propose uniquement la correction minimale nécessaire.
+
+Rappels obligatoires :
+- Tu dois respecter strictement le format JSON suivant :
+{
+  "file": "nom_du_fichier.py",
+  "line": numéro_de_ligne,
+  "action": "replace" | "insert" | "delete",
+  "new_code": "nouvelle_ligne_de_code (ou chaîne vide si delete)"
+}
+
+- Tu dois renvoyer uniquement ce JSON, sans aucun texte autour.
+- Si aucune correction n’est nécessaire, renvoie exactement :
+
+{
+  "file": null,
+  "line": null,
+  "action": "none",
+  "new_code": null
+}

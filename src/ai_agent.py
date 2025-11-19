@@ -1,182 +1,174 @@
-import json
 import os
+import json
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-# On charge les variables d'environnement depuis .env
+# Chargement des variables d'environnement (.env)
 load_dotenv()
 
-# Optionnel : tu peux garder Groq si tu veux
+# Import Groq (optionnel)
 try:
     from groq import Groq
 except ImportError:
     Groq = None
 
-# Mistral
+# Import Mistral (optionnel)
 try:
     from mistralai import Mistral
 except ImportError:
     Mistral = None
 
+
+# ---------- OUTILS GÉNÉRAUX ----------
+
+BASE_DIR = Path(__file__).resolve().parent.parent  # racine du projet (dossier auto-debugger-agent)
+
+
+def load_prompt(relative_path: str) -> str:
+    """
+    Charge un fichier de prompt texte à partir du dossier racine.
+    Exemple : 'prompts/system_agent.txt'
+    """
+    full_path = BASE_DIR / relative_path
+    if not full_path.exists():
+        raise FileNotFoundError(f"Fichier de prompt introuvable : {full_path}")
+    with open(full_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def build_messages(code: str, error: str) -> tuple[str, str]:
+    """
+    Construit le message system et user à partir des fichiers de prompt.
+    On injecte le code et l'erreur dans le message user.
+    """
+    system_prompt = load_prompt("prompts/system_agent.txt")
+    user_template = load_prompt("prompts/user_agent.txt")
+
+    user_prompt = (
+        user_template
+        .replace("<CODE>", code)
+        .replace("<ERREUR>", error)
+    )
+
+    return system_prompt, user_prompt
+
+
 def clean_ai_json(text: str) -> str:
     """
-    Nettoie la réponse IA : supprime les blocs markdown json ... 
+    Nettoie la réponse IA : supprime les blocs markdown ```json ... ```
     et retourne un JSON brut utilisable par json.loads().
     """
+    if not isinstance(text, str):
+        text = str(text)
 
-    # 1. On enlève les json ou python
-    if text.startswith(""):
-        # enlève tous les ... sur plusieurs lignes
-        cleaned = []
-        for line in text.splitlines():
-            if line.strip().startswith("```"):
-                continue
-            cleaned.append(line)
-        text = "\n".join(cleaned)
+    # 1) on enlève les lignes ```xxx
+    lines = text.splitlines()
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            # on ignore la ligne qui contient ``` ou ```json
+            continue
+        cleaned_lines.append(line)
 
-    # 2. On strip les espaces de début/fin
-    text = text.strip()
+    text = "\n".join(cleaned_lines).strip()
 
-    # 3. Beaucoup de modèles ajoutent des labels style "json"
-    if text.lower().startswith("json"):
+    # 2) Si ça commence par "json" ou similaire, on enlève
+    lowered = text.lower()
+    if lowered.startswith("json"):
         text = text[4:].strip()
 
     return text
 
-def build_system_message() -> str:
-    """
-    Message SYSTEM défini à l'étape 4.
-    """
-    return (
-        "Tu es un agent spécialisé dans la correction automatique de code Python. "
-        "Ton rôle n’est pas de réécrire entièrement le code, mais d’identifier précisément "
-        "la cause d’une erreur d’exécution et de proposer la correction minimale nécessaire.\n\n"
-        "Règles importantes :\n"
-        "1. Tu renvoies STRICTEMENT un JSON, sans aucun texte avant ou après.\n"
-        "2. Format JSON obligatoire :\n"
-        "{\n"
-        '  "file": "nom_du_fichier.py",\n'
-        "  \"line\": numéro_de_ligne,\n"
-        '  "action": "replace" | "insert" | "delete" | "none",\n'
-        '  "new_code": "nouvelle_ligne_de_code (ou chaîne vide si delete)"\n'
-        "}\n"
-        "3. Tu proposes la correction MINIMALE nécessaire.\n"
-        "4. Si aucune correction n’est nécessaire, tu renvoies exactement :\n"
-        "{\n"
-        "  \"file\": null,\n"
-        "  \"line\": null,\n"
-        "  \"action\": \"none\",\n"
-        "  \"new_code\": null\n"
-        "}\n"
-    )
 
+# ---------- FOURNISSEUR GROQ ----------
 
-def build_user_message(code: str, error: str) -> str:
-    """
-    Message USER défini à l'étape 4.
-    """
-    return f"""
-Voici le code source à analyser :
-
-{code}
-
-Voici l’erreur obtenue lors de l’exécution :
-
-{error}
-
-Ta tâche :
-Analyse ce code et ce message d’erreur.
-Identifie la cause exacte du problème.
-Propose uniquement la correction minimale nécessaire, en respectant STRICTEMENT le format JSON demandé.
-"""
-
-
-# ---------- VERSION GROQ (si tu veux garder) ----------
-
-def ask_groq_for_correction(code: str, error: str) -> str:
+def ask_groq_for_correction(system_prompt: str, user_prompt: str) -> str:
     """
     Appelle une IA via Groq pour obtenir un JSON de correction.
     Nécessite la variable d'environnement GROQ_API_KEY.
     """
     if Groq is None:
-        raise ImportError("Le package 'groq' n'est pas installé. Fais 'pip install groq' ou utilise Mistral.")
+        raise ImportError("Le package 'groq' n'est pas installé. Fais 'pip install groq'.")
 
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise ValueError("Clé API Groq manquante. Définis GROQ_API_KEY dans le fichier .env ou les variables d’environnement.")
+        raise ValueError("Clé API Groq manquante. Définis GROQ_API_KEY dans le fichier .env.")
 
     client = Groq(api_key=api_key)
 
-    system_message = build_system_message()
-    user_message = build_user_message(code, error)
-
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
+        model="llama-3.1-8b-instant",  # tu peux changer de modèle si besoin
         messages=[
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         temperature=0,
     )
 
-    ai_text = response.choices[0].message["content"]
+    ai_text = response.choices[0].message.content
     return ai_text
 
 
-# ---------- VERSION MISTRAL ----------
+# ---------- FOURNISSEUR MISTRAL ----------
 
-def ask_mistral_for_correction(code: str, error: str) -> str:
+def ask_mistral_for_correction(system_prompt: str, user_prompt: str) -> str:
     """
-    Appelle Mistral pour obtenir un JSON correctif.
+    Appelle une IA via Mistral pour obtenir un JSON de correction.
+    Nécessite la variable d'environnement MISTRAL_API_KEY.
     """
     if Mistral is None:
-        raise ImportError("Le package 'mistralai' n'est pas installé.")
+        raise ImportError("Le package 'mistralai' n'est pas installé. Fais 'pip install mistralai'.")
 
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
-        raise ValueError("Clé API Mistral manquante. Définis MISTRAL_API_KEY dans ton fichier .env.")
+        raise ValueError("Clé API Mistral manquante. Définis MISTRAL_API_KEY dans le fichier .env.")
 
     client = Mistral(api_key=api_key)
 
-    system_message = build_system_message()
-    user_message = build_user_message(code, error)
-
     response = client.chat.complete(
-        model="mistral-small-latest",
+        model="mistral-small-latest",  # ou autre modèle si dispo
         messages=[
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message}
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         temperature=0,
     )
 
-    # Nouvelle extraction correcte
-    ai_message = response.choices[0].message
+    message = response.choices[0].message
 
-    # message.content est une LISTE de blocs (text chunks)
-    if isinstance(ai_message.content, list):
-        ai_text = "".join(
-            block["text"] for block in ai_message.content
-            if isinstance(block, dict) and "text" in block
-        )
+    # message.content peut être une string ou une liste de blocs
+    if isinstance(message.content, list):
+        parts = []
+        for block in message.content:
+            if isinstance(block, dict) and "text" in block:
+                parts.append(block["text"])
+        ai_text = "".join(parts)
     else:
-        ai_text = ai_message.content
+        ai_text = message.content
 
-    return clean_ai_json(ai_text)
+    return ai_text
 
 
-# ---------- Fonction principale utilisée par ton projet ----------
+# ---------- WRAPPER GÉNÉRIQUE ----------
 
 def ask_ai_for_correction(code: str, error: str, provider: str = "mistral") -> str:
     """
     Wrapper générique pour choisir le fournisseur d'IA.
-    provider = "mistral" ou "groq"
+    provider = "mistral" ou "groq".
+    Retourne TOUJOURS un JSON texte nettoyé.
     """
+    system_prompt, user_prompt = build_messages(code, error)
+
     if provider == "mistral":
         print("[ai_agent] Appel à Mistral...")
-        return ask_mistral_for_correction(code, error)
+        raw_text = ask_mistral_for_correction(system_prompt, user_prompt)
     elif provider == "groq":
         print("[ai_agent] Appel à Groq...")
-        return ask_groq_for_correction(code, error)
+        raw_text = ask_groq_for_correction(system_prompt, user_prompt)
     else:
-        raise ValueError(f"Fournisseur IA inconnu : {provider}")
+        raise ValueError(f"Fournisseur IA inconnu : {provider}")
+
+    cleaned = clean_ai_json(raw_text)
+    return cleaned
