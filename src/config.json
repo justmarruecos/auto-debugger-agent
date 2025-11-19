@@ -1,4 +1,5 @@
 {
     "project_path": "C:\\25-26\\debug\\auto-debugger-agent",
-    "script_path": "sources\\buggy_script.py"
+    "script_path": "sources\\buggy_script.py",
+    "venv_python": "C:/25-26/venv2526/Scripts/python.exe"
 }

@@ -24,7 +24,8 @@ def load_config() -> dict:
     project_root_default = os.path.abspath(os.path.join(current_dir, ".."))
     return {
         "project_path": project_root_default,
-        "script_path": "sources/buggy_script.py"
+        "script_path": "sources/buggy_script.py",
+        "venv_python": ""
     }
 
 
@@ -46,6 +47,7 @@ def main():
 
     default_project = config.get("project_path")
     default_script = config.get("script_path", "sources/buggy_script.py")
+    default_venv_python = config.get("venv_python", "")
 
     project_path = st.text_input(
         "Chemin du projet",
@@ -54,6 +56,7 @@ def main():
     )
     project_path = os.path.abspath(project_path)
 
+    # Découverte des scripts dans /sources
     sources_dir = os.path.join(project_path, "sources")
     script_options = []
 
@@ -77,13 +80,26 @@ def main():
         help="Choisis le script Python à exécuter et corriger."
     )
 
+    venv_python = st.text_input(
+        "Chemin de l'interpréteur Python du projet (venv)",
+        value=default_venv_python,
+        help="Exemple : C:/25-26/venv2526/Scripts/python.exe"
+    )
+
+    if venv_python.strip() == "":
+        st.info(
+            "Aucun interpréteur de venv spécifié. "
+            "L'agent utilisera l'environnement Python courant (sys.executable)."
+        )
+
     save_cfg = st.checkbox("Sauvegarder la configuration", value=True)
 
     if st.button("Lancer l'analyse"):
-        # Met à jour/sauve la config
+        # Met à jour / sauve la config
         new_config = {
             "project_path": project_path,
-            "script_path": script_path
+            "script_path": script_path,
+            "venv_python": venv_python
         }
         if save_cfg:
             save_config(new_config)
@@ -104,7 +120,7 @@ def main():
         # 3) Exécution initiale du script
         st.subheader("2️⃣ Exécution initiale du script")
         try:
-            stdout, stderr, returncode = run_python_script(project_path, script_path)
+            stdout, stderr, returncode = run_python_script(project_path, script_path, venv_python)
         except FileNotFoundError as e:
             st.error(str(e))
             return
@@ -118,8 +134,8 @@ def main():
             st.success("Le script s'est exécuté sans erreur. Rien à corriger.")
             return
 
-        # 4) Appel IA simulé
-        st.subheader("3️⃣ Proposition de correction par l'IA (simulée)")
+        # 4) Appel IA (Mistral ou autre, via ai_agent.py)
+        st.subheader("3️⃣ Proposition de correction par l'IA")
         ai_response_text = ask_ai_for_correction(code, stderr, provider="mistral")
         st.markdown("**Réponse brute de l'IA**")
         st.code(ai_response_text, language="json")
@@ -159,7 +175,7 @@ def main():
 
             # 7) Ré-exécution après correction
             st.subheader("6️⃣ Ré-exécution après correction")
-            stdout2, stderr2, returncode2 = run_python_script(project_path, script_path)
+            stdout2, stderr2, returncode2 = run_python_script(project_path, script_path, venv_python)
 
             st.markdown("**Sortie standard (après correction)**")
             st.code(stdout2 or "(vide)")
