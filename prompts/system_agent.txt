@@ -34,3 +34,14 @@ Si tu détectes qu’aucune correction n’est nécessaire, renvoie exactement :
 }
 
 Tu dois toujours respecter scrupuleusement ces règles.
+
+Si la ligne à corriger contient un commentaire inutile ou trompeur,
+tu peux modifier ou supprimer ce commentaire (replace ou delete),
+à condition de respecter les règles du JSON.
+
+Quand tu choisis la valeur du champ "line" dans le JSON :
+- tu dois utiliser le numéro de ligne EXACT où l’erreur se produit dans le traceback,
+  par exemple "File ..., line 2, in avg" => line = 2.
+- tu ne dois pas corriger la ligne d’appel (print, appel de fonction), mais la ligne
+  où se trouve l’opération fautive (division, indexation, etc.).
+

@@ -1,5 +1,4 @@
 import os
-import json
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -37,16 +36,33 @@ def load_prompt(relative_path: str) -> str:
         return f.read()
 
 
-def build_messages(code: str, error: str) -> tuple[str, str]:
+def build_correction_messages(code: str, error: str) -> tuple[str, str]:
     """
-    Construit le message system et user à partir des fichiers de prompt.
-    On injecte le code et l'erreur dans le message user.
+    Construit le message system et user pour la CORRECTION
+    à partir des fichiers de prompt.
     """
     system_prompt = load_prompt("prompts/system_agent.txt")
     user_template = load_prompt("prompts/user_agent.txt")
 
     user_prompt = (
         user_template
+        .replace("<CODE>", code)
+        .replace("<ERREUR>", error)
+    )
+
+    return system_prompt, user_prompt
+
+
+def build_explanation_messages(code: str, error: str) -> tuple[str, str]:
+    """
+    Construit les messages system/user pour l'EXPLICATION de l'erreur.
+    On réutilise le même system_prompt et un user_prompt différent.
+    """
+    system_prompt = load_prompt("prompts/system_agent.txt")
+    explain_template = load_prompt("prompts/user_explain.txt")
+
+    user_prompt = (
+        explain_template
         .replace("<CODE>", code)
         .replace("<ERREUR>", error)
     )
@@ -84,22 +100,23 @@ def clean_ai_json(text: str) -> str:
 
 # ---------- FOURNISSEUR GROQ ----------
 
-def ask_groq_for_correction(system_prompt: str, user_prompt: str) -> str:
-    """
-    Appelle une IA via Groq pour obtenir un JSON de correction.
-    Nécessite la variable d'environnement GROQ_API_KEY.
-    """
+def _get_groq_client() -> "Groq":
     if Groq is None:
         raise ImportError("Le package 'groq' n'est pas installé. Fais 'pip install groq'.")
-
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("Clé API Groq manquante. Définis GROQ_API_KEY dans le fichier .env.")
+    return Groq(api_key=api_key)
 
-    client = Groq(api_key=api_key)
+
+def groq_chat(system_prompt: str, user_prompt: str, model: str = "llama-3.1-8b-instant") -> str:
+    """
+    Appelle le chat Groq générique et renvoie le texte de la réponse.
+    """
+    client = _get_groq_client()
 
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",  # tu peux changer de modèle si besoin
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -107,28 +124,28 @@ def ask_groq_for_correction(system_prompt: str, user_prompt: str) -> str:
         temperature=0,
     )
 
-    ai_text = response.choices[0].message.content
-    return ai_text
+    return response.choices[0].message.content
 
 
 # ---------- FOURNISSEUR MISTRAL ----------
 
-def ask_mistral_for_correction(system_prompt: str, user_prompt: str) -> str:
-    """
-    Appelle une IA via Mistral pour obtenir un JSON de correction.
-    Nécessite la variable d'environnement MISTRAL_API_KEY.
-    """
+def _get_mistral_client() -> "Mistral":
     if Mistral is None:
         raise ImportError("Le package 'mistralai' n'est pas installé. Fais 'pip install mistralai'.")
-
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
         raise ValueError("Clé API Mistral manquante. Définis MISTRAL_API_KEY dans le fichier .env.")
+    return Mistral(api_key=api_key)
 
-    client = Mistral(api_key=api_key)
+
+def mistral_chat(system_prompt: str, user_prompt: str, model: str = "mistral-small-latest") -> str:
+    """
+    Appelle le chat Mistral générique et renvoie le texte de la réponse.
+    """
+    client = _get_mistral_client()
 
     response = client.chat.complete(
-        model="mistral-small-latest",  # ou autre modèle si dispo
+        model=model,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -151,24 +168,44 @@ def ask_mistral_for_correction(system_prompt: str, user_prompt: str) -> str:
     return ai_text
 
 
-# ---------- WRAPPER GÉNÉRIQUE ----------
+# ---------- WRAPPERS HAUT NIVEAU ----------
 
 def ask_ai_for_correction(code: str, error: str, provider: str = "mistral") -> str:
     """
-    Wrapper générique pour choisir le fournisseur d'IA.
-    provider = "mistral" ou "groq".
-    Retourne TOUJOURS un JSON texte nettoyé.
+    Demande à l'IA une proposition de correction sous forme de JSON.
+    Retourne TOUJOURS un texte JSON nettoyé.
     """
-    system_prompt, user_prompt = build_messages(code, error)
+    system_prompt, user_prompt = build_correction_messages(code, error)
 
     if provider == "mistral":
-        print("[ai_agent] Appel à Mistral...")
-        raw_text = ask_mistral_for_correction(system_prompt, user_prompt)
+        print("[ai_agent] Appel à Mistral (CORRECTION)...")
+        raw_text = mistral_chat(system_prompt, user_prompt)
     elif provider == "groq":
-        print("[ai_agent] Appel à Groq...")
-        raw_text = ask_groq_for_correction(system_prompt, user_prompt)
+        print("[ai_agent] Appel à Groq (CORRECTION)...")
+        raw_text = groq_chat(system_prompt, user_prompt)
     else:
         raise ValueError(f"Fournisseur IA inconnu : {provider}")
 
     cleaned = clean_ai_json(raw_text)
     return cleaned
+
+
+def ask_ai_for_explanation(code: str, error: str, provider: str = "mistral") -> str:
+    """
+    Demande à l'IA une EXPLICATION en langage naturel de l'erreur,
+    adaptée à un débutant.
+    Retourne du TEXTE LIBRE (PAS du JSON).
+    """
+    system_prompt, user_prompt = build_explanation_messages(code, error)
+
+    if provider == "mistral":
+        print("[ai_agent] Appel à Mistral (EXPLICATION)...")
+        text = mistral_chat(system_prompt, user_prompt)
+    elif provider == "groq":
+        print("[ai_agent] Appel à Groq (EXPLICATION)...")
+        text = groq_chat(system_prompt, user_prompt)
+    else:
+        raise ValueError(f"Fournisseur IA inconnu : {provider}")
+
+    # Ici on NE nettoie PAS en JSON, on veut une explication libre.
+    return text

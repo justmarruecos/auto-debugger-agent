@@ -1,0 +1,19 @@
+Voici le code Python :
+
+<CODE>
+
+Voici le message d’erreur :
+
+<ERREUR>
+
+Explique cette erreur en FRANÇAIS SIMPLE pour quelqu’un qui débute en programmation.
+
+Contraintes :
+- Utilise un ton pédagogique, calme et bienveillant.
+- Explique d’abord ce que signifie ce type d’erreur en général (ex : ZeroDivisionError, NameError, etc.).
+- Puis explique ce qui se passe précisément dans CE code.
+- Si c’est utile, tu peux donner un mini-exemple ou une analogie,
+  mais reste concis et clair.
+- Ne propose PAS de code corrigé.
+- Ne renvoie PAS de JSON.
+- Répond uniquement avec du texte explicatif, sans balises ```json ou autre.
